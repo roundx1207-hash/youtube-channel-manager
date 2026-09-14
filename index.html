@@ -683,7 +683,7 @@
 
     <div class="panel-divider"></div>
 
-    <div class="label">구글 드라이브 동기화 — OAuth 클라이언트 ID</div>
+    <div class="label">구글 드라이브 동기화 — OAuth 클라이언트 ID (기본값 내장, 보통 수정 불필요)</div>
     <input id="gClientIdInput" type="text" placeholder="****.apps.googleusercontent.com" autocomplete="off">
     <div class="row">
       <span class="sync-status" id="syncStatus">연결 안 됨</span>
@@ -1506,6 +1506,8 @@ document.getElementById("apiKeySaveBtn").addEventListener("click", () => {
 /* ============ 구글 드라이브 동기화 ============ */
 
 const SYNC_PREF_KEY = "yt_channel_manager_sync_v1";
+// OAuth 클라이언트 ID 는 비밀값이 아니다. 사용 가능 출처가 콘솔에서 제한되어 있어 공개해도 안전하다.
+const DEFAULT_G_CLIENT_ID = "757380319681-v7fsativft5pis3v9da9bed2dn8qnh2d.apps.googleusercontent.com";
 const DRIVE_FILE_NAME = "ycm-data.json";
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.appdata";
 const DRIVE_API = "https://www.googleapis.com/drive/v3";
@@ -1523,6 +1525,7 @@ function saveSyncPref() {
 }
 
 let syncPref = loadSyncPref();
+if (!syncPref.clientId) syncPref.clientId = DEFAULT_G_CLIENT_ID;
 let gTokenClient = null;
 let gTokenHandlers = null;
 let gAccessToken = "";
@@ -1792,15 +1795,24 @@ function initDriveSync() {
     return;
   }
   syncNoteEl.textContent = "데이터는 드라이브의 앱 전용 폴더에 저장되며 내 드라이브 목록에는 보이지 않습니다.";
-  if (!syncPref.connected || !syncPref.clientId) {
+  if (!syncPref.clientId) {
     setSyncStatus("연결 안 됨");
     return;
   }
-  setSyncStatus("연결 중…");
+  // 이전에 이 구글 계정으로 승인한 적이 있으면 동의창 없이 자동 연결된다.
+  // 처음 쓰는 계정이면 조용히 실패하므로 사용자가 [연결] 을 누르면 된다.
+  const firstTime = !syncPref.connected;
+  setSyncStatus(firstTime ? "자동 연결 시도 중…" : "연결 중…");
   waitForGis(10000)
     .then(() => requestToken(false))
-    .then(() => syncNow())
-    .catch(err => setSyncStatus(err.message + " — 다시 연결해 주세요.", "err"));
+    .then(() => {
+      if (firstTime) { syncPref.connected = true; saveSyncPref(); }
+      return syncNow();
+    })
+    .catch(err => {
+      if (firstTime) setSyncStatus("연결 안 됨 — [연결] 버튼을 누르세요");
+      else setSyncStatus(err.message + " — 다시 연결해 주세요.", "err");
+    });
 }
 
 /* ============ 백업 / 복원 ============ */
