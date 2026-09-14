@@ -693,6 +693,11 @@
       <button class="btn-secondary" id="gPushBtn">지금 올리기</button>
     </div>
     <div class="sync-note" id="syncNote"></div>
+
+    <div class="panel-divider"></div>
+    <div class="row">
+      <button class="btn-secondary" id="panelCloseBtn">닫기</button>
+    </div>
   </div>
 </div>
 
@@ -1756,10 +1761,26 @@ document.getElementById("gPullBtn").addEventListener("click", async () => {
 });
 
 syncBtn.addEventListener("click", () => {
-  apiKeyPanel.classList.add("open");
-  apiKeyInput.value = state.apiKey || "";
-  gClientIdInput.value = syncPref.clientId || "";
-  gClientIdInput.focus();
+  const willOpen = !apiKeyPanel.classList.contains("open");
+  apiKeyPanel.classList.toggle("open", willOpen);
+  if (willOpen) {
+    apiKeyInput.value = state.apiKey || "";
+    gClientIdInput.value = syncPref.clientId || "";
+    gClientIdInput.focus();
+  }
+});
+
+// 패널 바깥을 클릭하거나 Esc 를 누르면 닫는다.
+document.addEventListener("click", (e) => {
+  if (!apiKeyPanel.classList.contains("open")) return;
+  if (apiKeyPanel.contains(e.target) || syncBtn.contains(e.target) || apiKeyBtn.contains(e.target)) return;
+  apiKeyPanel.classList.remove("open");
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") apiKeyPanel.classList.remove("open");
+});
+document.getElementById("panelCloseBtn").addEventListener("click", () => {
+  apiKeyPanel.classList.remove("open");
 });
 
 function initDriveSync() {
