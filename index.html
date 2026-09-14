@@ -114,6 +114,8 @@
   }
   .sync-status.ok { color: #16a34a; }
   .sync-status.err { color: #dc2626; }
+  #syncBtn.sync-ok { color: #16a34a; border-color: #16a34a; }
+  #syncBtn.sync-err { color: #dc2626; border-color: #dc2626; }
   .sync-note {
     font-size: 11px;
     line-height: 1.5;
@@ -1536,9 +1538,8 @@ const gClientIdInput = document.getElementById("gClientIdInput");
 function setSyncStatus(text, tone) {
   syncStatusEl.textContent = text;
   syncStatusEl.className = "sync-status" + (tone ? " " + tone : "");
-  if (tone === "ok") syncBtn.textContent = "☁";
-  else if (tone === "err") syncBtn.textContent = "⚠";
-  else syncBtn.textContent = "☁";
+  syncBtn.textContent = tone === "err" ? "⚠" : "☁";
+  syncBtn.className = "btn-secondary" + (tone ? " sync-" + tone : "");
   syncBtn.title = "구글 드라이브 동기화 — " + text;
 }
 
