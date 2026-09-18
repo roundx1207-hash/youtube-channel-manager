@@ -758,8 +758,12 @@
           <select id="filterDate">
             <option value="yesterday">어제</option>
             <option value="3d">최근 3일</option>
-            <option value="7d" selected>최근 일주일</option>
-            <option value="30d">최근 30일</option>
+            <option value="4d">최근 4일</option>
+            <option value="5d">최근 5일</option>
+            <option value="7d" selected>최근 7일</option>
+            <option value="14d">최근 2주</option>
+            <option value="30d">최근 한달</option>
+            <option value="all">전체</option>
           </select>
         </div>
         <div class="filter-group">
@@ -2031,7 +2035,10 @@ function computeDateRange(filterValue) {
     start.setDate(start.getDate() - 1);
     return { start, end: startOfToday };
   }
-  const daysMap = { "3d": 3, "7d": 7, "30d": 30 };
+  if (filterValue === "all") {
+    return { start: new Date(0), end: null };
+  }
+  const daysMap = { "3d": 3, "4d": 4, "5d": 5, "7d": 7, "14d": 14, "30d": 30 };
   const days = daysMap[filterValue] || 7;
   const start = new Date(startOfToday);
   start.setDate(start.getDate() - (days - 1));
