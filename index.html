@@ -757,6 +757,7 @@
           <label>조회기간</label>
           <select id="filterDate">
             <option value="yesterday">어제</option>
+            <option value="2d">최근 2일</option>
             <option value="3d">최근 3일</option>
             <option value="4d">최근 4일</option>
             <option value="5d">최근 5일</option>
@@ -2038,7 +2039,7 @@ function computeDateRange(filterValue) {
   if (filterValue === "all") {
     return { start: new Date(0), end: null };
   }
-  const daysMap = { "3d": 3, "4d": 4, "5d": 5, "7d": 7, "14d": 14, "30d": 30 };
+  const daysMap = { "2d": 2, "3d": 3, "4d": 4, "5d": 5, "7d": 7, "14d": 14, "30d": 30 };
   const days = daysMap[filterValue] || 7;
   const start = new Date(startOfToday);
   start.setDate(start.getDate() - (days - 1));
