@@ -482,8 +482,15 @@
   .filter-actions {
     display: flex;
     justify-content: center;
+    gap: 8px;
     padding: 0 28px 16px;
     background: var(--panel);
+  }
+  .btn-stop {
+    background: #6b7280;
+  }
+  .btn-stop:hover {
+    background: #4b5563;
   }
   .filter-group {
     display: flex;
@@ -782,6 +789,7 @@
       </div>
       <div class="filter-actions">
         <button class="btn" id="searchBtn">검색하기</button>
+        <button class="btn btn-stop" id="stopSearchBtn" hidden>검색중지</button>
       </div>
     </div>
     <div class="search-hint">
@@ -2005,7 +2013,7 @@ async function fetchRecentVideoIds(uploadsPlaylistId, cutoffStart) {
       if (publishedAt < cutoffStart) { hitOlder = true; break; }
       videoIds.push(item.contentDetails.videoId);
     }
-    if (hitOlder || !data.nextPageToken) break;
+    if (hitOlder || searchCancelled || !data.nextPageToken) break;
     pageToken = data.nextPageToken;
   }
   return videoIds;
@@ -2014,6 +2022,7 @@ async function fetchRecentVideoIds(uploadsPlaylistId, cutoffStart) {
 async function fetchVideoDetails(videoIds) {
   const results = [];
   for (let i = 0; i < videoIds.length; i += 50) {
+    if (searchCancelled) break;
     const batch = videoIds.slice(i, i + 50);
     const data = await ytFetch("/videos", { part: "snippet,statistics,contentDetails", id: batch.join(",") });
     (data.items || []).forEach(v => results.push(v));
@@ -2063,6 +2072,8 @@ let currentSortOrder = "views";
 let lastSearchVideos = [];
 let lastSearchErrors = [];
 let channelErrorSet = new Set();
+let searchCancelled = false;
+let searchRunning = false;
 
 function applySortAndRender() {
   const sorted = lastSearchVideos.slice();
@@ -2124,7 +2135,13 @@ async function runSearch() {
   const range = computeDateRange(dateFilter);
 
   const searchBtn = document.getElementById("searchBtn");
+  const stopBtn = document.getElementById("stopSearchBtn");
+  searchCancelled = false;
+  searchRunning = true;
   searchBtn.disabled = true;
+  stopBtn.hidden = false;
+  stopBtn.disabled = false;
+  alignActionButtons();
   document.getElementById("searchResultsList").innerHTML = "";
   setSearchStatus(`검색 중입니다... (0 / ${selected.length}개 채널)`, false);
 
@@ -2136,7 +2153,7 @@ async function runSearch() {
   let quotaHit = false;
 
   for (const channel of uniqueChannels) {
-    if (quotaHit) break;
+    if (quotaHit || searchCancelled) break;
     try {
       const { uploadsPlaylistId, channelTitle, subscriberCount } = await resolveChannel(channel);
       const videoIds = await fetchRecentVideoIds(uploadsPlaylistId, range.start);
@@ -2182,7 +2199,22 @@ async function runSearch() {
   channelErrorSet = newChannelErrorSet;
   applySortAndRender();
   renderChannelCol();
+  if (searchCancelled) {
+    const el = document.getElementById("searchStatus");
+    el.textContent = `검색을 중지했습니다 · ${done}/${uniqueChannels.length}개 채널까지의 결과 ${allVideos.length}개`;
+  }
+  searchRunning = false;
+  searchCancelled = false;
   searchBtn.disabled = false;
+  stopBtn.hidden = true;
+  alignActionButtons();
+}
+
+function stopSearch() {
+  if (!searchRunning) return;
+  searchCancelled = true;
+  document.getElementById("stopSearchBtn").disabled = true;
+  setSearchStatus("검색을 중지하는 중입니다...", false);
 }
 
 function renderSearchResults(videos, errors) {
@@ -2221,6 +2253,7 @@ function renderSearchResults(videos, errors) {
 }
 
 document.getElementById("searchBtn").addEventListener("click", runSearch);
+document.getElementById("stopSearchBtn").addEventListener("click", stopSearch);
 
 /* ============ 카테고리 목록 첫 줄 / 채널 목록 첫 줄 높이 맞춤 ============ */
 
@@ -2263,13 +2296,15 @@ function alignActionButtons() {
   const catBtn = document.getElementById("addCategoryBtn");
   const chBtn = document.getElementById("addChannelBtn");
   const searchBtn = document.getElementById("searchBtn");
+  const stopBtn = document.getElementById("stopSearchBtn");
   if (!catBtn || !chBtn || !searchBtn) return;
 
-  catBtn.style.marginTop = "";
-  searchBtn.style.marginTop = "";
+  const targets = [catBtn, searchBtn];
+  if (stopBtn && !stopBtn.hidden) targets.push(stopBtn);
+  targets.forEach(btn => { btn.style.marginTop = ""; });
 
   const refTop = chBtn.getBoundingClientRect().top;
-  [catBtn, searchBtn].forEach(btn => {
+  targets.forEach(btn => {
     const diff = refTop - btn.getBoundingClientRect().top;
     if (diff > 0) btn.style.marginTop = diff + "px";
   });
