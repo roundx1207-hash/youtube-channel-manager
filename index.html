@@ -2198,7 +2198,7 @@ async function runSearch() {
             title: v.snippet.title,
             thumbnail: thumb,
             channelTitle: channelTitle,
-            viewCount, commentCount, publishedAt,
+            viewCount, commentCount, publishedAt, isShort,
             subscriberCount: subscriberCount || null,
             reactionRate: (commentCount !== null && viewCount > 0) ? (commentCount / viewCount * 100) : null
           });
@@ -2279,7 +2279,9 @@ function renderSearchResults(videos, errors) {
 
 function downloadVideoLinks() {
   if (renderedVideos.length === 0) return;
-  const text = renderedVideos.map(v => `https://www.youtube.com/watch?v=${v.id}`).join("\r\n") + "\r\n";
+  const text = renderedVideos.map(v => v.isShort
+    ? `https://www.youtube.com/shorts/${v.id}`
+    : `https://www.youtube.com/watch?v=${v.id}`).join("\r\n") + "\r\n";
   const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
