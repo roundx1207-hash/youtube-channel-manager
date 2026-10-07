@@ -697,6 +697,7 @@
   <button class="btn-secondary" id="exportBtn">⬇ 백업</button>
   <button class="btn-secondary" id="importBtn">⬆ 복원</button>
   <input id="importFile" type="file" accept="application/json,.json" hidden>
+  <button class="btn-secondary" id="sheetSaveBtn" title="카테고리/채널 목록을 구글 시트에 저장">📊 시트 저장</button>
   <button class="btn-secondary" id="darkModeBtn"></button>
   <button class="btn-secondary" id="apiKeyBtn">⚙ API 키 설정</button>
   <div class="api-key-panel" id="apiKeyPanel">
@@ -1848,6 +1849,133 @@ function initDriveSync() {
       else setSyncStatus(err.message + " — 다시 연결해 주세요.", "err");
     });
 }
+
+/* ============ 구글 시트 저장 ============ */
+
+const SHEET_ID = "1q91asQVt2jXTvqcRgnef7BNN3n6TAQM8Vxcz1pHrz3Q";
+const SHEET_GID = 0;
+const SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
+const SHEETS_API = "https://sheets.googleapis.com/v4/spreadsheets";
+
+// 드라이브 동기화 토큰과 권한 범위가 달라 별도 토큰을 쓴다.
+let sheetsTokenClient = null;
+let sheetsTokenHandlers = null;
+let sheetsAccessToken = "";
+let sheetsTokenExpiresAt = 0;
+
+function requestSheetsToken() {
+  return new Promise((resolve, reject) => {
+    if (sheetsAccessToken && Date.now() < sheetsTokenExpiresAt) return resolve(sheetsAccessToken);
+    if (!syncPref.clientId) return reject(new Error("OAuth 클라이언트 ID가 없습니다."));
+    if (!sheetsTokenClient || sheetsTokenClient._clientId !== syncPref.clientId) {
+      sheetsTokenClient = google.accounts.oauth2.initTokenClient({
+        client_id: syncPref.clientId,
+        scope: SHEETS_SCOPE,
+        callback: (res) => {
+          const h = sheetsTokenHandlers;
+          sheetsTokenHandlers = null;
+          if (!h) return;
+          if (res && res.access_token) {
+            sheetsAccessToken = res.access_token;
+            sheetsTokenExpiresAt = Date.now() + (Number(res.expires_in || 3600) - 60) * 1000;
+            h.resolve(sheetsAccessToken);
+          } else {
+            h.reject(new Error((res && res.error) || "인증에 실패했습니다."));
+          }
+        },
+        error_callback: (err) => {
+          const h = sheetsTokenHandlers;
+          sheetsTokenHandlers = null;
+          if (h) h.reject(new Error((err && err.type) || "인증 창이 닫혔습니다."));
+        }
+      });
+      sheetsTokenClient._clientId = syncPref.clientId;
+    }
+    sheetsTokenHandlers = { resolve, reject };
+    sheetsTokenClient.requestAccessToken({ prompt: "" });
+  });
+}
+
+async function sheetsFetch(url, opts) {
+  const token = await requestSheetsToken();
+  const init = Object.assign({}, opts);
+  init.headers = Object.assign({ "Content-Type": "application/json" }, (opts && opts.headers) || {}, {
+    Authorization: "Bearer " + token
+  });
+  const res = await fetch(url, init);
+  if (res.status === 401) {
+    sheetsAccessToken = "";
+    sheetsTokenExpiresAt = 0;
+  }
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    if (/SERVICE_DISABLED|has not been used|is disabled/i.test(body)) {
+      throw new Error("구글 클라우드 콘솔에서 Google Sheets API를 사용 설정해야 합니다.");
+    }
+    if (res.status === 403) throw new Error("이 시트에 쓸 권한이 없습니다. 시트 소유 계정으로 로그인했는지 확인하세요.");
+    if (res.status === 404) throw new Error("시트를 찾을 수 없습니다.");
+    throw new Error("구글 시트 오류 " + res.status + (body ? ": " + body.slice(0, 200) : ""));
+  }
+  return res.json();
+}
+
+function getChannelUrl(ch) {
+  const cached = state.channelCache[ch.trim().toLowerCase()];
+  if (cached && cached.channelId) return "https://www.youtube.com/channel/" + cached.channelId;
+  const s = ch.trim();
+  if (/^https?:\/\//i.test(s)) return s;
+  if (s.startsWith("@")) return "https://www.youtube.com/" + s;
+  return "";
+}
+
+function buildSheetRows() {
+  const rows = [["카테고리", "채널(등록값)", "채널명", "구독자 수", "채널 링크"]];
+  state.order.forEach(cat => {
+    const list = state.categories[cat] || [];
+    if (list.length === 0) { rows.push([cat, "", "", "", ""]); return; }
+    list.forEach(ch => {
+      const subs = getChannelSubscriberCount(ch);
+      rows.push([cat, ch, getChannelDisplayName(ch), subs >= 0 ? subs : "", getChannelUrl(ch)]);
+    });
+  });
+  return rows;
+}
+
+async function saveToSheet() {
+  if (location.protocol === "file:") {
+    alert("file:// 로 직접 연 페이지에서는 구글 로그인이 차단됩니다. https 주소에서 사용하세요.");
+    return;
+  }
+  const rows = buildSheetRows();
+  if (!confirm(`카테고리 ${state.order.length}개 / 채널 ${rows.length - 1}행을 구글 시트에 저장합니다.\n시트의 기존 내용은 모두 지워지고 새로 쓰여집니다. 계속할까요?`)) return;
+
+  const btn = document.getElementById("sheetSaveBtn");
+  btn.disabled = true;
+  btn.textContent = "📊 저장 중…";
+  try {
+    await waitForGis(10000);
+    const meta = await sheetsFetch(`${SHEETS_API}/${SHEET_ID}?fields=sheets.properties(sheetId,title)`, { method: "GET" });
+    const sheets = meta.sheets || [];
+    const target = sheets.find(sh => sh.properties.sheetId === SHEET_GID) || sheets[0];
+    if (!target) throw new Error("시트 탭을 찾을 수 없습니다.");
+    const range = "'" + target.properties.title.replace(/'/g, "''") + "'";
+    await sheetsFetch(`${SHEETS_API}/${SHEET_ID}/values/${encodeURIComponent(range)}:clear`, { method: "POST", body: "{}" });
+    await sheetsFetch(`${SHEETS_API}/${SHEET_ID}/values/${encodeURIComponent(range + "!A1")}?valueInputOption=RAW`, {
+      method: "PUT",
+      body: JSON.stringify({ values: rows })
+    });
+    if (confirm(`구글 시트에 ${rows.length - 1}행을 저장했습니다. 시트를 열어볼까요?`)) {
+      window.open(`https://docs.google.com/spreadsheets/d/${SHEET_ID}/edit#gid=${target.properties.sheetId}`, "_blank", "noopener");
+    }
+  } catch (err) {
+    alert("시트 저장 실패: " + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "📊 시트 저장";
+  }
+}
+
+document.getElementById("sheetSaveBtn").addEventListener("click", saveToSheet);
 
 /* ============ 백업 / 복원 ============ */
 
