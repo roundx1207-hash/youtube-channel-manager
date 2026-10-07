@@ -116,6 +116,36 @@
   .sync-status.err { color: #dc2626; }
   #syncBtn.sync-ok { color: #16a34a; border-color: #16a34a; }
   #syncBtn.sync-err { color: #dc2626; border-color: #dc2626; }
+  .sheet-toast {
+    position: fixed;
+    top: 60px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    max-width: min(640px, calc(100vw - 32px));
+    padding: 10px 14px;
+    background: var(--panel);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  .sheet-toast[hidden] { display: none; }
+  .sheet-toast.ok { border-color: #16a34a; }
+  .sheet-toast.err { border-color: #dc2626; color: #dc2626; }
+  .sheet-toast a { color: var(--accent); font-weight: 600; white-space: nowrap; }
+  .sheet-toast button {
+    border: none;
+    background: transparent;
+    color: var(--text-sub);
+    font-size: 16px;
+    cursor: pointer;
+  }
   .sync-note {
     font-size: 11px;
     line-height: 1.5;
@@ -689,6 +719,12 @@
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
+
+<div class="sheet-toast" id="sheetToast" hidden>
+  <span id="sheetToastText"></span>
+  <a id="sheetToastLink" target="_blank" rel="noopener noreferrer" hidden>시트 열기</a>
+  <button id="sheetToastClose" title="닫기">×</button>
+</div>
 
 <div class="app-header">
   <h1>📺 유튜브 채널 관리</h1>
@@ -1885,12 +1921,23 @@ function requestSheetsToken() {
         error_callback: (err) => {
           const h = sheetsTokenHandlers;
           sheetsTokenHandlers = null;
-          if (h) h.reject(new Error((err && err.type) || "인증 창이 닫혔습니다."));
+          if (!h) return;
+          const type = err && err.type;
+          if (type === "popup_failed_to_open") h.reject(new Error("구글 로그인 팝업이 차단되었습니다. 주소창 오른쪽의 팝업 차단 아이콘을 눌러 허용한 뒤 다시 눌러주세요."));
+          else if (type === "popup_closed") h.reject(new Error("구글 로그인 창이 닫혔습니다."));
+          else h.reject(new Error(type || "구글 로그인에 실패했습니다."));
         }
       });
       sheetsTokenClient._clientId = syncPref.clientId;
     }
     sheetsTokenHandlers = { resolve, reject };
+    // 로그인 창에서 응답이 없으면 무한정 기다리지 않는다.
+    setTimeout(() => {
+      if (sheetsTokenHandlers && sheetsTokenHandlers.resolve === resolve) {
+        sheetsTokenHandlers = null;
+        reject(new Error("구글 로그인 응답이 없습니다. 팝업이 차단되지 않았는지 확인하고 다시 눌러주세요."));
+      }
+    }, 120000);
     sheetsTokenClient.requestAccessToken({ prompt: "" });
   });
 }
@@ -1937,15 +1984,11 @@ function getChannelHandle(ch) {
   return "";
 }
 
-// 아직 확인되지 않은 채널은 채널 ID를 조회하고, 핸들을 모르는 채널은 snippet.customUrl 로 채워 캐시에 저장한다.
+// 채널 ID는 알지만 핸들을 모르는 채널을 snippet.customUrl 로 채워 캐시에 저장한다 (50개당 할당량 1).
 async function fillChannelHandles() {
   if (!(state.apiKey || "").trim()) return;
   const all = [];
   state.order.forEach(cat => (state.categories[cat] || []).forEach(ch => all.push(ch)));
-  for (const ch of all) {
-    if (state.channelCache[ch.trim().toLowerCase()]) continue;
-    try { await resolveChannel(ch); } catch (e) {}
-  }
   const ids = new Set();
   all.forEach(ch => {
     const cached = state.channelCache[ch.trim().toLowerCase()];
@@ -1974,22 +2017,38 @@ function quoteSheetTitle(title) {
   return "'" + title.replace(/'/g, "''") + "'";
 }
 
+function showSheetToast(text, tone, withLink) {
+  const box = document.getElementById("sheetToast");
+  document.getElementById("sheetToastText").textContent = text;
+  const link = document.getElementById("sheetToastLink");
+  link.hidden = !withLink;
+  link.href = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/edit`;
+  box.className = "sheet-toast" + (tone ? " " + tone : "");
+  box.hidden = false;
+}
+
+document.getElementById("sheetToastClose").addEventListener("click", () => {
+  document.getElementById("sheetToast").hidden = true;
+});
+
 async function saveToSheet() {
   if (location.protocol === "file:") {
-    alert("file:// 로 직접 연 페이지에서는 구글 로그인이 차단됩니다. https 주소에서 사용하세요.");
+    showSheetToast("file:// 로 직접 연 페이지에서는 구글 로그인이 차단됩니다. https 주소에서 사용하세요.", "err");
     return;
   }
-  if (state.order.length === 0) { alert("저장할 카테고리가 없습니다."); return; }
-  if (!confirm(`카테고리 ${state.order.length}개를 구글 시트에 카테고리별 탭으로 저장합니다.\n같은 이름의 탭이 있으면 그 탭의 내용은 지워지고 새로 쓰여집니다. 계속할까요?`)) return;
+  if (state.order.length === 0) { showSheetToast("저장할 카테고리가 없습니다.", "err"); return; }
 
   const btn = document.getElementById("sheetSaveBtn");
   btn.disabled = true;
   btn.textContent = "📊 저장 중…";
   try {
+    showSheetToast("구글 로그인 확인 중… (로그인/권한 허용 창이 뜨면 진행해 주세요)");
     await waitForGis(10000);
     // 버튼 클릭 직후에 로그인 창을 띄워야 팝업 차단을 피할 수 있어 토큰부터 받는다.
     await requestSheetsToken();
+    showSheetToast("채널 핸들 확인 중…");
     try { await fillChannelHandles(); } catch (e) {}
+    showSheetToast("구글 시트에 쓰는 중…");
 
     const meta = await sheetsFetch(`${SHEETS_API}/${SHEET_ID}?fields=sheets.properties(sheetId,title)`, { method: "GET" });
     const existing = {};
@@ -2039,11 +2098,9 @@ async function saveToSheet() {
     });
 
     const chCount = Object.values(rowsByTitle).reduce((n, rows) => n + rows.length - 1, 0);
-    if (confirm(`구글 시트에 카테고리 ${titles.length}개 탭 / 채널 ${chCount}개를 저장했습니다. 시트를 열어볼까요?`)) {
-      window.open(`https://docs.google.com/spreadsheets/d/${SHEET_ID}/edit`, "_blank", "noopener");
-    }
+    showSheetToast(`구글 시트에 카테고리 ${titles.length}개 탭 / 채널 ${chCount}개를 저장했습니다.`, "ok", true);
   } catch (err) {
-    alert("시트 저장 실패: " + err.message);
+    showSheetToast("시트 저장 실패: " + err.message, "err");
   } finally {
     btn.disabled = false;
     btn.textContent = "📊 시트 저장";
