@@ -583,17 +583,23 @@
     flex-shrink: 0;
   }
   .download-links-btn {
-    padding: 3px 10px;
-    border: 1px solid var(--border);
+    padding: 5px 12px;
+    border: none;
     border-radius: 6px;
-    background: transparent;
-    color: var(--text-sub);
+    background: #2563eb;
+    color: #fff;
     font-size: 12px;
-    font-weight: 600;
+    font-weight: 700;
     cursor: pointer;
+    box-shadow: 0 1px 3px rgba(37, 99, 235, 0.35);
   }
-  .download-links-btn:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
-  .download-links-btn:disabled { opacity: 0.4; cursor: default; }
+  .download-links-btn:hover:not(:disabled) { background: #1d4ed8; }
+  .download-links-btn:disabled {
+    background: var(--hover);
+    color: var(--text-sub);
+    box-shadow: none;
+    cursor: default;
+  }
   .sort-btn {
     padding: 2px 0 4px;
     border: none;
@@ -863,7 +869,7 @@
     <div class="search-status-row">
       <div class="search-status" id="searchStatus"></div>
       <div class="results-actions">
-        <button class="download-links-btn" id="downloadLinksBtn" title="결과에 나온 모든 영상 링크를 텍스트 파일로 저장" disabled>링크 다운로드</button>
+        <button class="download-links-btn" id="downloadLinksBtn" title="결과에 나온 모든 영상 링크를 텍스트 파일로 저장" disabled>⬇ 링크 다운로드</button>
         <div class="sort-toggle" id="sortToggle">
           <button class="sort-btn active" data-sort="views">조회수</button>
           <button class="sort-btn" data-sort="subRate">클릭률</button>
