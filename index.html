@@ -2279,9 +2279,7 @@ function renderSearchResults(videos, errors) {
 
 function downloadVideoLinks() {
   if (renderedVideos.length === 0) return;
-  const text = renderedVideos.map(v => `https://www.youtube.com/watch?v=${v.id}`).join("
-") + "
-";
+  const text = renderedVideos.map(v => `https://www.youtube.com/watch?v=${v.id}`).join("\r\n") + "\r\n";
   const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
