@@ -1853,7 +1853,6 @@ function initDriveSync() {
 /* ============ 구글 시트 저장 ============ */
 
 const SHEET_ID = "1q91asQVt2jXTvqcRgnef7BNN3n6TAQM8Vxcz1pHrz3Q";
-const SHEET_GID = 0;
 const SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
 const SHEETS_API = "https://sheets.googleapis.com/v4/spreadsheets";
 
@@ -1928,17 +1927,51 @@ function getChannelUrl(ch) {
   return "";
 }
 
-function buildSheetRows() {
-  const rows = [["카테고리", "채널(등록값)", "채널명", "구독자 수", "채널 링크"]];
-  state.order.forEach(cat => {
-    const list = state.categories[cat] || [];
-    if (list.length === 0) { rows.push([cat, "", "", "", ""]); return; }
-    list.forEach(ch => {
-      const subs = getChannelSubscriberCount(ch);
-      rows.push([cat, ch, getChannelDisplayName(ch), subs >= 0 ? subs : "", getChannelUrl(ch)]);
-    });
+function getChannelHandle(ch) {
+  const cached = state.channelCache[ch.trim().toLowerCase()];
+  if (cached && cached.handle) return cached.handle;
+  const s = ch.trim();
+  if (s.startsWith("@")) return s;
+  const m = s.match(/youtube\.com\/(@[^\/?#]+)/i);
+  if (m) { try { return decodeURIComponent(m[1]); } catch (e) { return m[1]; } }
+  return "";
+}
+
+// 아직 확인되지 않은 채널은 채널 ID를 조회하고, 핸들을 모르는 채널은 snippet.customUrl 로 채워 캐시에 저장한다.
+async function fillChannelHandles() {
+  if (!(state.apiKey || "").trim()) return;
+  const all = [];
+  state.order.forEach(cat => (state.categories[cat] || []).forEach(ch => all.push(ch)));
+  for (const ch of all) {
+    if (state.channelCache[ch.trim().toLowerCase()]) continue;
+    try { await resolveChannel(ch); } catch (e) {}
+  }
+  const ids = new Set();
+  all.forEach(ch => {
+    const cached = state.channelCache[ch.trim().toLowerCase()];
+    if (cached && cached.channelId && !cached.handle) ids.add(cached.channelId);
   });
-  return rows;
+  const idList = Array.from(ids);
+  const handleById = {};
+  for (let i = 0; i < idList.length; i += 50) {
+    const data = await ytFetch("/channels", { part: "snippet", id: idList.slice(i, i + 50).join(","), maxResults: 50 });
+    (data.items || []).forEach(item => {
+      if (item.snippet && item.snippet.customUrl) handleById[item.id] = item.snippet.customUrl;
+    });
+  }
+  if (Object.keys(handleById).length === 0) return;
+  Object.values(state.channelCache).forEach(cached => {
+    if (cached && handleById[cached.channelId]) cached.handle = handleById[cached.channelId];
+  });
+  saveData();
+}
+
+function toSheetTitle(cat) {
+  return cat.trim().slice(0, 100) || "(이름 없음)";
+}
+
+function quoteSheetTitle(title) {
+  return "'" + title.replace(/'/g, "''") + "'";
 }
 
 async function saveToSheet() {
@@ -1946,26 +1979,68 @@ async function saveToSheet() {
     alert("file:// 로 직접 연 페이지에서는 구글 로그인이 차단됩니다. https 주소에서 사용하세요.");
     return;
   }
-  const rows = buildSheetRows();
-  if (!confirm(`카테고리 ${state.order.length}개 / 채널 ${rows.length - 1}행을 구글 시트에 저장합니다.\n시트의 기존 내용은 모두 지워지고 새로 쓰여집니다. 계속할까요?`)) return;
+  if (state.order.length === 0) { alert("저장할 카테고리가 없습니다."); return; }
+  if (!confirm(`카테고리 ${state.order.length}개를 구글 시트에 카테고리별 탭으로 저장합니다.\n같은 이름의 탭이 있으면 그 탭의 내용은 지워지고 새로 쓰여집니다. 계속할까요?`)) return;
 
   const btn = document.getElementById("sheetSaveBtn");
   btn.disabled = true;
   btn.textContent = "📊 저장 중…";
   try {
     await waitForGis(10000);
+    // 버튼 클릭 직후에 로그인 창을 띄워야 팝업 차단을 피할 수 있어 토큰부터 받는다.
+    await requestSheetsToken();
+    try { await fillChannelHandles(); } catch (e) {}
+
     const meta = await sheetsFetch(`${SHEETS_API}/${SHEET_ID}?fields=sheets.properties(sheetId,title)`, { method: "GET" });
-    const sheets = meta.sheets || [];
-    const target = sheets.find(sh => sh.properties.sheetId === SHEET_GID) || sheets[0];
-    if (!target) throw new Error("시트 탭을 찾을 수 없습니다.");
-    const range = "'" + target.properties.title.replace(/'/g, "''") + "'";
-    await sheetsFetch(`${SHEETS_API}/${SHEET_ID}/values/${encodeURIComponent(range)}:clear`, { method: "POST", body: "{}" });
-    await sheetsFetch(`${SHEETS_API}/${SHEET_ID}/values/${encodeURIComponent(range + "!A1")}?valueInputOption=RAW`, {
-      method: "PUT",
-      body: JSON.stringify({ values: rows })
+    const existing = {};
+    (meta.sheets || []).forEach(sh => { existing[sh.properties.title] = sh.properties.sheetId; });
+
+    const titles = [];
+    state.order.forEach(cat => {
+      const t = toSheetTitle(cat);
+      if (!titles.includes(t)) titles.push(t);
     });
-    if (confirm(`구글 시트에 ${rows.length - 1}행을 저장했습니다. 시트를 열어볼까요?`)) {
-      window.open(`https://docs.google.com/spreadsheets/d/${SHEET_ID}/edit#gid=${target.properties.sheetId}`, "_blank", "noopener");
+    const missing = titles.filter(t => existing[t] === undefined);
+    if (missing.length > 0) {
+      const res = await sheetsFetch(`${SHEETS_API}/${SHEET_ID}:batchUpdate`, {
+        method: "POST",
+        body: JSON.stringify({ requests: missing.map(title => ({ addSheet: { properties: { title } } })) })
+      });
+      (res.replies || []).forEach(r => {
+        if (r.addSheet) existing[r.addSheet.properties.title] = r.addSheet.properties.sheetId;
+      });
+    }
+    // 탭 순서를 카테고리 순서에 맞춘다.
+    await sheetsFetch(`${SHEETS_API}/${SHEET_ID}:batchUpdate`, {
+      method: "POST",
+      body: JSON.stringify({ requests: titles.map((title, index) => ({
+        updateSheetProperties: { properties: { sheetId: existing[title], index }, fields: "index" }
+      })) })
+    });
+
+    const rowsByTitle = {};
+    titles.forEach(t => { rowsByTitle[t] = [["채널 주소", "채널 핸들"]]; });
+    state.order.forEach(cat => {
+      (state.categories[cat] || []).forEach(ch => {
+        rowsByTitle[toSheetTitle(cat)].push([getChannelUrl(ch) || ch, getChannelHandle(ch)]);
+      });
+    });
+
+    await sheetsFetch(`${SHEETS_API}/${SHEET_ID}/values:batchClear`, {
+      method: "POST",
+      body: JSON.stringify({ ranges: titles.map(quoteSheetTitle) })
+    });
+    await sheetsFetch(`${SHEETS_API}/${SHEET_ID}/values:batchUpdate`, {
+      method: "POST",
+      body: JSON.stringify({
+        valueInputOption: "RAW",
+        data: titles.map(t => ({ range: quoteSheetTitle(t) + "!A1", values: rowsByTitle[t] }))
+      })
+    });
+
+    const chCount = Object.values(rowsByTitle).reduce((n, rows) => n + rows.length - 1, 0);
+    if (confirm(`구글 시트에 카테고리 ${titles.length}개 탭 / 채널 ${chCount}개를 저장했습니다. 시트를 열어볼까요?`)) {
+      window.open(`https://docs.google.com/spreadsheets/d/${SHEET_ID}/edit`, "_blank", "noopener");
     }
   } catch (err) {
     alert("시트 저장 실패: " + err.message);
