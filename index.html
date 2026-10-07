@@ -114,8 +114,17 @@
   }
   .sync-status.ok { color: #16a34a; }
   .sync-status.err { color: #dc2626; }
-  #syncBtn.sync-ok { color: #16a34a; border-color: #16a34a; }
-  #syncBtn.sync-err { color: #dc2626; border-color: #dc2626; }
+  /* 테두리를 2px 로 키우면서 버튼 크기가 변하지 않도록 padding 을 1px 줄인다. */
+  #syncBtn.sync-ok,
+  #syncBtn.sync-err {
+    border-width: 2px;
+    padding: 6px 11px;
+    font-weight: 700;
+  }
+  #syncBtn.sync-ok { color: #16a34a; border-color: #16a34a; background: rgba(22, 163, 74, 0.14); }
+  #syncBtn.sync-err { color: #dc2626; border-color: #dc2626; background: rgba(220, 38, 38, 0.12); }
+  #syncBtn.sync-ok:hover { background: rgba(22, 163, 74, 0.24); }
+  #syncBtn.sync-err:hover { background: rgba(220, 38, 38, 0.2); }
   .sheet-toast {
     position: fixed;
     top: 60px;
@@ -1612,7 +1621,7 @@ const gClientIdInput = document.getElementById("gClientIdInput");
 function setSyncStatus(text, tone) {
   syncStatusEl.textContent = text;
   syncStatusEl.className = "sync-status" + (tone ? " " + tone : "");
-  syncBtn.textContent = tone === "err" ? "⚠" : "☁";
+  syncBtn.textContent = tone === "err" ? "⚠ 동기화 오류" : tone === "ok" ? "☁ 연결됨" : "☁";
   syncBtn.className = "btn-secondary" + (tone ? " sync-" + tone : "");
   syncBtn.title = "구글 드라이브 동기화 — " + text;
 }
