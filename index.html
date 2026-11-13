@@ -2220,15 +2220,27 @@ function extractHandleOrId(raw) {
   const s = raw.trim();
   let m = s.match(/youtube\.com\/channel\/(UC[\w-]{10,})/i);
   if (m) return { type: "id", value: m[1] };
-  m = s.match(/youtube\.com\/@([\w.\-]+)/i);
-  if (m) return { type: "handle", value: "@" + m[1] };
-  if (s.startsWith("@")) return { type: "handle", value: s };
+  m = s.match(/youtube\.com\/@([^\/?#\s]+)/i);
+  if (m) return { type: "handle", value: "@" + safeDecode(m[1]) };
+  if (s.startsWith("@")) return { type: "handle", value: safeDecode(s.split(/[\/?#\s]/)[0]) };
   return { type: "name", value: s };
+}
+
+function safeDecode(s) {
+  try { return decodeURIComponent(s); } catch (e) { return s; }
+}
+
+// 예전 파서는 한글·일본어 등 비영문 핸들을 앞부분(예: "@1")만 읽어 엉뚱한 채널을 캐시했을 수 있다
+function isStaleHandleCache(rawName, cached) {
+  if (cached.resolvedHandle) return false;
+  const m = rawName.trim().match(/@([^\/?#\s]+)/);
+  return !!m && !/^[\w.\-]+$/.test(m[1]);
 }
 
 async function resolveChannel(rawName) {
   const cacheKey = rawName.trim().toLowerCase();
-  if (state.channelCache[cacheKey]) return state.channelCache[cacheKey];
+  const cachedEntry = state.channelCache[cacheKey];
+  if (cachedEntry && !isStaleHandleCache(rawName, cachedEntry)) return cachedEntry;
 
   const parsed = extractHandleOrId(rawName);
   let channelId = null;
@@ -2257,6 +2269,7 @@ async function resolveChannel(rawName) {
     : parseInt(stats.subscriberCount, 10);
 
   const result = { channelId, uploadsPlaylistId, channelTitle, thumbnailUrl, subscriberCount };
+  if (parsed.type === "handle") result.resolvedHandle = parsed.value;
   state.channelCache[cacheKey] = result;
   saveData();
   return result;
@@ -2276,11 +2289,12 @@ const resolveAttempted = new Set();
 function ensureChannelResolved(rawName) {
   const cacheKey = rawName.trim().toLowerCase();
   const cached = state.channelCache[cacheKey];
-  if (cached && cached.thumbnailUrl && cached.subscriberCount !== undefined) return;
+  const stale = cached && isStaleHandleCache(rawName, cached);
+  if (cached && !stale && cached.thumbnailUrl && cached.subscriberCount !== undefined) return;
   if (resolveAttempted.has(cacheKey)) return;
   if (!(state.apiKey || "").trim()) return;
   resolveAttempted.add(cacheKey);
-  if (cached && (!cached.thumbnailUrl || cached.subscriberCount === undefined)) delete state.channelCache[cacheKey];
+  if (cached && (stale || !cached.thumbnailUrl || cached.subscriberCount === undefined)) delete state.channelCache[cacheKey];
   resolveChannel(rawName).then(() => {
     renderChannelCol();
   }).catch(() => {
@@ -2464,7 +2478,7 @@ async function runSearch() {
           if (range.end && publishedAt >= range.end) return;
           if (viewCount < minViews) return;
           const durationSec = parseDurationSeconds(v.contentDetails.duration);
-          const isShort = durationSec > 0 && durationSec <= 60;
+          const isShort = durationSec > 0 && durationSec <= 180; // 쇼츠는 2024-10부터 최대 3분
           if (videoType === "short" && !isShort) return;
           if (videoType === "long" && isShort) return;
           const thumb = (v.snippet.thumbnails.medium || v.snippet.thumbnails.default).url;
